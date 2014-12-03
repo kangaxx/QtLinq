@@ -1,3 +1,4 @@
+#include "QMessageBox"
 #include "sqlfunctions.h"
 
 xmlfunctions::xmlfunctions(QFile *File, QString Database)
@@ -25,8 +26,7 @@ xmlfunctions::xmlfunctions(QFile *File, QString Database)
     {
         if (Root.isElement())
         {
-
-            if (Root.toElement().attribute("name") == Database && Root.nodeName() == "database")
+            if (Root.toElement().attribute("name").trimmed() == Database.trimmed() && Root.nodeName().trimmed() == "database")
             {
                 m_DatabaseTree = Root;
                 File->close();
