@@ -325,6 +325,7 @@ bool LiRecords::AddRecord(QSqlRecord rcd)
     try {
         if (plRecords)
         {
+
             plRecords->append(rcd);
             iTotalCount ++;
             return true;
@@ -355,7 +356,8 @@ LiTable::LiTable(QString TableName)
 
 LiTable::~LiTable()
 {
-    int i = 0;
+    if (plRecords)
+        delete plRecords;
 }
 
 void LiTable::SetName(QString TableName)
@@ -394,28 +396,41 @@ bool LiTable::AppendRecord(QSqlRecord rcd)
 /////////////////////////////////////////////////////
 LiDataContext::LiDataContext()
 {
-    lpTables = new QList<LiTable*>;
+    m_qryNum = 0;
+    for(int i = 0;i<INT_MAX_TABLECOUNT;i++)
+        lpTables[i] = 0;
     lFields = new QList<LiField>;
     lConditions = new QList<LiField>;
+    m_orders = new QList<LiField>;
     bSameTable = false;
 }
 
 LiDataContext::~LiDataContext()
 {
-    if (lpTables != NULL)
-    {
-        delete lpTables;
-        lpTables = NULL;
-    }
+    for(int i = 0;i<INT_MAX_TABLECOUNT;i++)
+        if (lpTables[i])
+        {
+            delete lpTables[i];
+            lpTables[i] = 0;
+        }
+
     if (lFields != NULL)
     {
+        lFields->clear();
         delete lFields;
         lFields = NULL;
     }
     if (lConditions != NULL)
     {
+        lConditions->clear();
         delete lConditions;
         lConditions = NULL;
+    }
+    if (m_orders != NULL){
+        m_orders->clear();
+        delete m_orders;
+        m_orders=NULL;
+
     }
 }
 
@@ -432,35 +447,38 @@ void LiDataContext::SetTableName(QString TableName)
     if (GetTableNum()>1)
         throw "Already have two or more tables, SetTableName fail!";
     else if (GetTableNum()==0)
-    {
         AddTable(TableName);
-    }
     else if (GetTableNum()==1)
     {
-        if ((*(this->lpTables))[0]->GetRecords().GetCount()>0)
+        if (lpTables[0]->GetRecords().GetCount()>0)
             throw "Can not RESET a reocreds of table,SetTableName fail!";
         else
-            (*(this->lpTables))[0]->SetName(TableName);
+            lpTables[0]->SetName(TableName);
     }
     bSameTable=true;
 }
 
 //AddTable for SetTableName when there is no Table, so must Add one
-LiTable * LiDataContext::AddTable(QString TableName)
+void LiDataContext::AddTable(QString TableName)
 {
     LiTable * Table = new LiTable(TableName);
-    (*lpTables).append(Table);
-    return Table;
+    for(int i = 0 ; i< INT_MAX_TABLECOUNT ; i++)
+        if (lpTables[i] == 0)
+        {
+            lpTables[i] = Table;
+            return;
+        }
+    throw "Can not add table ,out of range!";
 }
 
 
 //Normally add Field and Condition will return true , otherwise tablename conflict the order .(see comment About SetTableName) gxx 2013 11 27
 bool LiDataContext::AddField(LiField * Field)
 {
-    if ((*lpTables).count() == 0 && Field->GetTableName()== NULL)
+    if (GetTableNum() == 0 && Field->GetTableName()== NULL)
         throw "Can not add a Field without any table be set, Add Field fail!";
-    if ((*lpTables).count()>0 && Field->GetTableName()==NULL)
-        Field->SetTableLink((*lpTables)[0]);
+    if (GetTableNum() == 1 && Field->GetTableName()==NULL)
+        Field->SetTableLink(lpTables[0]);
     foreach (LiField fld, (*lFields))
     {
         if (fld.GetName() == Field->GetName() && fld.GetTableName() != NULL && Field->GetTableName() != NULL && fld.GetTableName() == Field->GetTableName())
@@ -508,12 +526,25 @@ bool LiDataContext::AddField(QString & FieldName, eFType FieldType,int Len,int P
 
 bool LiDataContext::AddCondition(LiField * CondField)
 {
-    if ((*lpTables).count() == 0 && CondField->GetTableName()== NULL)
+    if (GetTableNum() == 0 && CondField->GetTableName()== NULL)
         throw "Can not add a Field without any table be set, Add Field fail!";
-    if ((*lpTables).count()>0 && CondField->GetTableName()==NULL)
-        CondField->SetTableLink((*lpTables)[0]);
+    if (GetTableNum() >0 && CondField->GetTableName()==NULL)
+        CondField->SetTableLink(lpTables[0]);
     (*lConditions).append(*CondField);
     return true;
+}
+
+bool LiDataContext::setQueryNum(int num)
+{
+    if (m_qryNum <= 0 && num > 0){
+        m_qryNum = num;
+        return true;
+    }
+    else{
+        return false;
+    }
+
+
 }
 
 
@@ -530,7 +561,22 @@ bool LiDataContext::AddConditions(QList<LiField*> CondFields, eAndOrNot GroupAON
     //                list.clear();
 }
 
-LiField* LiDataContext::MakeGroupCondsToCond(QList<LiField *> GroupCond, eAndOrNot GroupAON, LiField *result)
+bool LiDataContext::AddOrder(LiField *orderField)
+{
+    if (GetTableNum() == 0 && orderField->GetTableName()== NULL)
+        throw "Table name was not setted , Add order Field fail!";
+    if (GetTableNum() == 1 && orderField->GetTableName()==NULL)
+        orderField->SetTableLink(lpTables[0]);
+    foreach (LiField fld, (*m_orders))
+    {
+        if (fld.GetName() == orderField->GetName() && fld.GetTableName() != NULL && orderField->GetTableName() != NULL && fld.GetTableName() == orderField->GetTableName())
+            throw "Already have a same field , Add Field Error!";
+    }
+    (*m_orders).append(*orderField);
+    return true;
+}
+
+LiField* LiDataContext::MakeGroupCondsToCond(QList<LiField *> , eAndOrNot , LiField *result)
 {
     //NOT COMPLETE ,DO IT LATER GXX 2013 11 29
     return result;
@@ -539,17 +585,22 @@ LiField* LiDataContext::MakeGroupCondsToCond(QList<LiField *> GroupCond, eAndOrN
 
 int LiDataContext::GetTableNum()
 {
-    return (*lpTables).count();
+    int result = 0;
+    for (int i = 0;i<INT_MAX_TABLECOUNT;i++)
+        if (lpTables[i])
+            result++;
+    return result;
 }
 
 QStringList *LiDataContext::GetTableNames(QStringList &NameList) const
 {
     QStringList* result;
     result = &NameList;
-    foreach(LiTable *pTable,(*(this->lpTables)))
-    {
-        *result << pTable->GetName();
-    }
+    for(int i = 0;i< INT_MAX_TABLECOUNT;i++)
+        if (lpTables[i])
+        {
+            *result << lpTables[i]->GetName();
+        }
     return result;
 }
 
@@ -568,13 +619,30 @@ QList<LiField> LiDataContext::GetFieldsByTableName(QString & TableName)
 
 QList<LiField> LiDataContext::GetConditionsByTableName(QString & TableName) const
 {
+    if (TableName.trimmed().isEmpty())
+        throw "TableName is empty,GetConditionsByTableName Fail!";
     QList<LiField> result;
     if ((*lConditions).count()<= 0)
         return result;
-    if (TableName.trimmed().isEmpty())
-        throw "TableName is empty,GetConditionsByTableName Fail!";
+
 
     foreach (LiField field, (*lConditions))
+    {
+        if (field.GetTableName().trimmed().toUpper() == TableName.trimmed().toUpper())
+            result.append(field);
+    }
+    return result;
+}
+
+QList<LiField> LiDataContext::getOrderFieldByTableName(QString &TableName) const
+{
+    if (TableName.trimmed().isEmpty())
+        throw "TableName is empty,GetConditionsByTableName Fail!";
+    QList<LiField> result;
+    if ((*m_orders).count()<= 0)
+        return result;
+
+    foreach (LiField field, (*m_orders))
     {
         if (field.GetTableName().trimmed().toUpper() == TableName.trimmed().toUpper())
             result.append(field);
@@ -597,13 +665,15 @@ LiXmlLinker::LiXmlLinker(const QString &Database, const QString &FileName)
     m_pFile->setFileName(FileName);
 }
 
-LiXmlLinker::LiXmlLinker(const LiXmlLinker &other)
+LiXmlLinker::LiXmlLinker(const LiXmlLinker &other):QSqlDatabase()
 {
     m_FileName =other.m_FileName;
     m_Database = other.m_Database;
     m_pFile = new QFile;
     m_pFile = other.GetFile();
 }
+
+
 
 LiXmlLinker&LiXmlLinker::operator =(const LiXmlLinker & Right)
 {
@@ -618,12 +688,12 @@ LiXmlLinker&LiXmlLinker::operator =(const LiXmlLinker & Right)
 
 LiXmlLinker::LiXmlLinker(Connections Conn)
 {
-    m_FileName = Conn.ConnName;
+    m_FileName = Conn.ConnName; //gxx change Conn.Server to Conn.ConnName 20150629
     m_Database = Conn.Database;
     if (m_FileName.trimmed().isEmpty())
         throw "Iniatialization Fail, please check the file path and name";
     m_pFile = new QFile;
-    m_pFile->setFileName(Conn.ConnName);
+    m_pFile->setFileName(m_FileName);
 
 
     //donothing;

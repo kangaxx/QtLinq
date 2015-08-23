@@ -9,16 +9,15 @@ QT       += core gui\
             widgets\
             xml
 
-TARGET = SqlFunctions
+TARGET = $(QM_ROOT)/lib/SqlFunctions
 TEMPLATE = lib
-CONFIG += staticlib
+#CONFIG += staticlib
 
 SOURCES += sqlfunctions.cpp \
     sqlfactory.cpp \
     xmlfunctions.cpp \
     QLinq.cpp
 
-HEADERS += sqlfunctions.h
 unix:!symbian {
     maemo5 {
         target.path = /opt/usr/lib
@@ -27,3 +26,6 @@ unix:!symbian {
     }
     INSTALLS += target
 }
+
+LIBS += -L$(QM_ROOT)/lib -lcommonfunction_c
+INCLUDEPATH += $(QM_SRC)/hds

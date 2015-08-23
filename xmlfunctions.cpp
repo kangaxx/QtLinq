@@ -1,3 +1,4 @@
+//db work on xml file
 #include "sqlfunctions.h"
 
 xmlfunctions::xmlfunctions(QFile *File, QString Database)
@@ -25,7 +26,6 @@ xmlfunctions::xmlfunctions(QFile *File, QString Database)
     {
         if (Root.isElement())
         {
-
             if (Root.toElement().attribute("name") == Database && Root.nodeName() == "database")
             {
                 m_DatabaseTree = Root;
@@ -49,7 +49,6 @@ int xmlfunctions::FltRecord(const QString &TableName,LiField Conditions[], int C
     QDomNode Record = Table.firstChild();
     if (Record.isNull())
         return Result;
-
     while(!Record.isNull())
     {
         if (Record.isElement() && Record.nodeName() == "record" && AnalyseRecord(Record,Conditions,ConditionNum,FieldIntegrity))
@@ -81,7 +80,7 @@ int xmlfunctions::UpdRecord(QFile *File,const QString &TableName, LiField Condit
         if (!doc.setContent(File,true,&errorStr,&errorLine,&errorCol))
         {
             File->close();
-            throw "InsertRecord error, pls check the file!";
+            throw QString("InsertRecord error, error: ")+errorStr;
         }
         File->close();
         QDomElement root = doc.documentElement();
@@ -314,7 +313,7 @@ void xmlfunctions::InsertRecord(QFile *File, const QString &TableName, LiField F
                 }
                 if (DefaultFields.count()>0)
                 {
-                    for(int j;j<DefaultFields.count();j++)
+                    for(int j=0;j<DefaultFields.count();j++)
                     {
                         if (FieldNames.contains(DefaultFields.at(j).toElement().attribute("name")))
                             continue;
@@ -349,7 +348,7 @@ void xmlfunctions::InsertRecord(QFile *File, const QString &TableName, LiField F
 
 }
 
-QList<LiField> xmlfunctions::GetDefaultFields(const QString &TableName,const QDomNode &Table)
+QList<LiField> xmlfunctions::GetDefaultFields(const QString &,const QDomNode &Table)
 {
     QDomNode DefaultFields;
     QList<LiField> Result;
@@ -362,6 +361,7 @@ QList<LiField> xmlfunctions::GetDefaultFields(const QString &TableName,const QDo
     {
         DefaultFields = DefaultFields.nextSibling();
     }
+    return Result;
 }
 
 void xmlfunctions::UpdateXML(QFile *File)
@@ -388,11 +388,9 @@ void xmlfunctions::AppendNode2LiTable(const QDomNode &Record,QStringList FieldNa
     {
         if (Field.isElement() && FieldNames.contains(Field.toElement().attribute("name")))
         {
-
             QSqlField T(Field.toElement().attribute("name"));
             T.setValue(Field.toElement().attribute("value"));
             NewRecord.append(T);
-
         }
         Field = Field.nextSibling();
     }
@@ -478,10 +476,9 @@ void xmlfunctions::UpdateOrInsertFieldToRecord(QDomNode &Record, const QString F
     bool IsExists = false;
     while(!FieldExists.isNull())
     {
-        if (FieldExists.isElement() && FieldExists.toElement().tagName() == "record" && FieldExists.toElement().attribute("name") == FieldName)
+        if (FieldExists.isElement() && FieldExists.toElement().tagName() == "field" && FieldExists.toElement().attribute("name") == FieldName)
         {
             IsExists = true;
-            FieldExists.toElement().setAttribute("value",FieldValue);
         }
         FieldExists = FieldExists.nextSibling();
     }
@@ -496,7 +493,7 @@ void xmlfunctions::UpdateOrInsertFieldToRecord(QDomNode &Record, const QString F
 }
 
 //still not finished yet
-bool xmlfunctions::AnalyseCMDWithPrompty(const QDomNode &Table)
+bool xmlfunctions::AnalyseCMDWithPrompty(const QDomNode &)
 {
     return true;
 }
@@ -506,7 +503,10 @@ bool xmlfunctions::AnalyseRecord(QDomNode &Record, LiField Conditions[],int Cond
 {
     if (ConditionNum < 1)
         return true;
-    bool Result = (bool&) Regular;
+
+    bool result = true;
+    if (Regular == MustRegular)
+        result = false;
     QDomNode Field;
     for (int i = 0;i<ConditionNum;i++)
     {
@@ -523,22 +523,45 @@ bool xmlfunctions::AnalyseRecord(QDomNode &Record, LiField Conditions[],int Cond
             }
             if(Conditions[i].GetAON()== OR || Conditions[i].GetAON() == NOTOR)  // OR condition
             {
-                if(Field.toElement().attribute("name")== Conditions[i].GetName() && Field.toElement().attribute("value") == Conditions[i].GetValue())
+
+                if(Field.toElement().attribute("name")== Conditions[i].GetName() && ValueCmp( Field.toElement().attribute("value"), Conditions[i].GetValue(),Conditions[i].GetSO()))
                     return true;
             }
             else  //AND condition
             {
-                if (Field.toElement().attribute("name") == Conditions[i].GetName() && Field.toElement().attribute("value") != Conditions[i].GetValue())
+                if (Field.toElement().attribute("name") == Conditions[i].GetName() && (!ValueCmp( Field.toElement().attribute("value"), Conditions[i].GetValue(),Conditions[i].GetSO())))
                     return false;
-                else if (Field.toElement().attribute("name") == Conditions[i].GetName() && Field.toElement().attribute("value") == Conditions[i].GetValue())
-                    Result = true;
+                else if (Field.toElement().attribute("name") == Conditions[i].GetName() && ValueCmp( Field.toElement().attribute("value"), Conditions[i].GetValue(),Conditions[i].GetSO()))
+                    result = true;
             }
 
 
             Field = Field.nextSibling();
         }
     }
-    return Result;
+    return result;
+}
+
+bool xmlfunctions::ValueCmp(QString value, QString cond, eLiSqlOperate opera)
+{
+    switch (opera) {
+    case liBigAndLes:
+        return (value != cond);
+    case liEqual:
+        return (value == cond);
+    case liBigger:
+        return (value > cond);
+    case liLesser:
+        return (value < cond);
+    case liEqlAndBig:
+        return (value >= cond);
+    case liEqlAndLes:
+        return (value <= cond);
+    default:
+        return (value == cond);
+        break;
+    }
+    return false;
 }
 
 //if no table found this function will return a null node (Node isNull)

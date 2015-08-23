@@ -1,11 +1,34 @@
-#include "sqlfunctions.h"
 
+#include "sqlfunctions.h"
+#include "commonfunction_c.h"
+using namespace commonfunction_c;
 /*********************************************************************************************************************************************************/
 //                                                                 Factory's SQL Functions                                                               //
 //                                                                          Begin                                                                        //
 /*********************************************************************************************************************************************************/
 
 //Mysql Functions
+MysqlQuery::MysqlQuery(QSqlDatabase *db)
+{
+    m_pDb = db;
+}
+
+MysqlQuery::MysqlQuery(MysqlQuery &other):ISqlQuery()
+{
+    m_pDb = other.m_pDb;
+}
+
+MysqlQuery::~MysqlQuery()
+{
+    if (m_pDb)
+    {
+        if (m_pDb->isOpen())
+            m_pDb->close();
+        delete m_pDb;
+        m_pDb = 0;
+    }
+}
+
 QSqlDatabase * MysqlConnect::iniDBConnect(const QString &Server, const QString &UserName, const QString &Password, const QString &Database, const QString &ConnName)
 {
     if (ConnName.trimmed().isEmpty())
@@ -33,28 +56,16 @@ const QString * MysqlErrorMsg::lastError()
 }
 
 
-MysqlQuery::MysqlQuery(Connections Conn)
-{
-    m_pDb = new QSqlDatabase;
-    *m_pDb = QSqlDatabase::addDatabase("QMYSQL",Conn.ConnName);
-    m_pDb->setHostName(Conn.Server);
-    m_pDb->setUserName(Conn.User);
-    m_pDb->setPassword(Conn.Passwd);
-    m_pDb->setDatabaseName(Conn.Database);
-}
 
 QSqlQuery MysqlQuery::query(QSqlDatabase pDB, QString &SqlCmd, QString & sErr)
 {
     try
     {
         pDB.open();
-        if ((!pDB.isValid()) || (!pDB.isOpen()))
-            throw pDB.lastError().text();
-        QSqlQuery * query = new QSqlQuery(pDB);
-        (*query).exec(SqlCmd);
-        sErr = (*query).lastError().text();
+        QSqlQuery qry = query(pDB,SqlCmd);
+        sErr = qry.lastError().text();
         pDB.close();
-        return (*query);
+        return qry;
     }
     catch (QString exception)
     {
@@ -65,6 +76,8 @@ QSqlQuery MysqlQuery::query(QSqlDatabase pDB, QString &SqlCmd, QString & sErr)
 QSqlQuery MysqlQuery::query(QSqlDatabase pDB, QString &SqlCmd)
 {
     pDB.open();
+    if ((!pDB.isValid()) || (!pDB.isOpen()))
+        throw pDB.lastError().text();
     QSqlQuery * query = new QSqlQuery(pDB);
     (*query).exec(SqlCmd);
     pDB.close();
@@ -73,23 +86,13 @@ QSqlQuery MysqlQuery::query(QSqlDatabase pDB, QString &SqlCmd)
 
 QSqlQuery MysqlQuery::query(QString &SqlCmd)
 {
-    QSqlQuery * query = new QSqlQuery;
-    (*query).exec(SqlCmd);
-    return (*query);
+    return query(*m_pDb,SqlCmd);
 }
 
-MysqlQuery::~MysqlQuery()
-{
-    if (m_pDb)
-    {
-        delete m_pDb;
-        m_pDb = 0;
-    }
-}
 
-LiTable& MysqlQuery::query(QSqlDatabase pDB, LiDataContext &dc, LiTable &table)
-{
 
+LiTable& MysqlQuery::query(QSqlDatabase db, LiDataContext &dc, LiTable &table)
+{
     LiTable * result;   //should update later.
     result = &table;
     QStringList TableNames;
@@ -120,24 +123,19 @@ LiTable& MysqlQuery::query(QSqlDatabase pDB, LiDataContext &dc, LiTable &table)
             if (field.GetName().trimmed().isEmpty() || field.GetValue().trimmed().isEmpty())
                 continue;
 
-            if (field.GetAON() == OR)
-                SqlCmd = SqlCmd + " OR " + field.GetName() + "="+ "'" + field.GetValue() + "'";
-            else
-                SqlCmd = SqlCmd + " AND "  + field.GetName() + "="+ "'" + field.GetValue() + "'";
+            SqlCmd = GenerateCMD(SqlCmd,field.GetName(),field.GetValue(),field.GetAON(),field.GetSO());
         }
     }
 
 
     //Running Sqlcmd in Sql Database and return the result
 
-    pDB.open();
-
     QSqlQuery Qry;
-    Qry = query(pDB,SqlCmd);
+    Qry = query(db ,SqlCmd);
 
 
     if (Qry.size()<0)
-        throw QString("Run SQL query error , Command is : "+SqlCmd);
+        throw QString("query2: Run SQL query error , Command is : "+SqlCmd);
 
 
     QList<QSqlRecord> *lRcds = new QList<QSqlRecord>;
@@ -146,79 +144,18 @@ LiTable& MysqlQuery::query(QSqlDatabase pDB, LiDataContext &dc, LiTable &table)
     {
         (*lRcds).append(Qry.record());
     }
-    pDB.close();
+
     LiRecords * GetRcd = new LiRecords(*lRcds);
 
     table.SetRecords(GetRcd);
 
     return *result;
+
 }
 
 LiTable &MysqlQuery::query(LiDataContext &dc, LiTable &table)
 {
-    LiTable * result;   //should update later.
-    result = &table;
-    QStringList TableNames;
-    dc.GetTableNames(TableNames);
-    if (TableNames.count()<=0)
-        throw "Sql Parameters incomplete,Mysql query Error !";
-    QString c_TableName = TableNames.at(0);
-    if (dc.GetFieldsByTableName(c_TableName).count() <= 0)
-        throw "Sql Parameters incomplete,Mysql query Error !";
-    QString SqlCmd;
-    SqlCmd = "SELECT ";
-    foreach(LiField field,dc.GetFieldsByTableName(c_TableName))
-    {
-        if (!field.GetName().trimmed().isEmpty())
-            SqlCmd = SqlCmd + field.GetName() + ",";
-    }
-    SqlCmd = SqlCmd.left(SqlCmd.length()-1); // cut off last ch ','
-    SqlCmd = SqlCmd + " FROM " + c_TableName + " "; //add From Table subsentence
-    //add WHERE subsentence to sqlcmd
-
-
-    SqlCmd = SqlCmd + " WHERE 1=1 ";
-    if (dc.GetConditionsByTableName(c_TableName).count()>0)
-    {
-        foreach (LiField field, dc.GetConditionsByTableName(c_TableName))
-        {
-
-            if (field.GetName().trimmed().isEmpty() || field.GetValue().trimmed().isEmpty())
-                continue;
-
-            if (field.GetAON() == OR)
-                SqlCmd = SqlCmd + " OR " + field.GetName() + "="+ "'" + field.GetValue() + "'";
-            else
-                SqlCmd = SqlCmd + " AND "  + field.GetName() + "="+ "'" + field.GetValue() + "'";
-        }
-    }
-
-
-    //Running Sqlcmd in Sql Database and return the result
-
-    m_pDb->open();
-
-    QSqlQuery Qry;
-    Qry = query(*m_pDb,SqlCmd);
-
-
-    if (Qry.size()<0)
-        throw QString("Run SQL query error , Command is : "+SqlCmd);
-
-
-    QList<QSqlRecord> *lRcds = new QList<QSqlRecord>;
-
-    while (Qry.next())
-    {
-        (*lRcds).append(Qry.record());
-    }
-    m_pDb->close();
-    LiRecords * GetRcd = new LiRecords(*lRcds);
-
-    table.SetRecords(GetRcd);
-
-    return *result;
-
+    return query(*m_pDb,dc,table);
 }
 
 int MysqlQuery::DoDel(QSqlDatabase pDB, LiDataContext &dc)
@@ -226,10 +163,10 @@ int MysqlQuery::DoDel(QSqlDatabase pDB, LiDataContext &dc)
     QStringList TableNames;
     dc.GetTableNames(TableNames);
     if (TableNames.count()<=0)
-        throw "Sql Parameters incomplete,Mysql query Error !";
+        throw "Sql Parameters incomplete,no table set,Mysql del Error !";
     QString c_TableName = TableNames.at(0);
-    if (dc.GetFieldsByTableName(c_TableName).count() <= 0)
-        throw "Sql Parameters incomplete,Mysql query Error !";
+    if (dc.GetConditionsByTableName(c_TableName).count() <= 0)
+        throw "Sql Parameters incomplete,Mysql del Error !";
     QString SqlCmd;
     SqlCmd = "DELETE ";
 
@@ -246,111 +183,31 @@ int MysqlQuery::DoDel(QSqlDatabase pDB, LiDataContext &dc)
             if (field.GetName().trimmed().isEmpty() || field.GetValue().trimmed().isEmpty())
                 continue;
 
-            if (field.GetAON() == OR)
-                SqlCmd = SqlCmd + " OR " + field.GetName() + "="+ "'" + field.GetValue() + "'";
-            else
-                SqlCmd = SqlCmd + " AND "  + field.GetName() + "="+ "'" + field.GetValue() + "'";
+            SqlCmd = GenerateCMD(SqlCmd,field.GetName(),field.GetValue(),field.GetAON(),field.GetSO());
         }
     }
 
 
     //Running Sqlcmd in Sql Database and return the result
 
-    pDB.open();
+
 
     QSqlQuery Qry;
     Qry = query(pDB,SqlCmd);
 
-    pDB.close();
+
 
     return 1;
 }
 
 int MysqlQuery::DoDel(LiDataContext &dc)
 {
-    QStringList TableNames;
-    dc.GetTableNames(TableNames);
-    if (TableNames.count()<=0)
-        throw "Sql Parameters incomplete,Mysql Delete Error !";
-    QString c_TableName = TableNames.at(0);
-    if (dc.GetConditionsByTableName(c_TableName).count() <= 0)
-        throw "Sql Parameters incomplete,Mysql Delete Error !";
-    QString SqlCmd;
-    SqlCmd = "DELETE ";
-
-    SqlCmd = SqlCmd + " FROM " + c_TableName + " "; //add From Table subsentence
-    //add WHERE subsentence to sqlcmd
-
-
-    SqlCmd = SqlCmd + " WHERE 1=1 ";
-    if (dc.GetConditionsByTableName(c_TableName).count()>0)
-    {
-        foreach (LiField field, dc.GetConditionsByTableName(c_TableName))
-        {
-
-            if (field.GetName().trimmed().isEmpty() || field.GetValue().trimmed().isEmpty())
-                continue;
-
-            if (field.GetAON() == OR)
-                SqlCmd = SqlCmd + " OR " + field.GetName() + "="+ "'" + field.GetValue() + "'";
-            else
-                SqlCmd = SqlCmd + " AND "  + field.GetName() + "="+ "'" + field.GetValue() + "'";
-        }
-    }
-
-
-    //Running Sqlcmd in Sql Database and return the result
-
-    m_pDb->open();
-
-    QSqlQuery Qry;
-    Qry = query(*m_pDb,SqlCmd);
-
-    m_pDb->close();
-
-    return 1;
+    return DoDel(*m_pDb,dc);
 }
 
 int MysqlQuery::DoInsert(LiDataContext &dc)
 {
-    int result=-1;
-    QStringList TableNames;
-    dc.GetTableNames(TableNames);
-    if (TableNames.count()<=0)
-        throw "Sql Parameters incomplete,Mysql query Error !";
-    QString c_TableName = TableNames.at(0);
-    if (dc.GetFieldsByTableName(c_TableName).count() <= 0)
-        throw "Sql Parameters incomplete,Mysql query Error !";
-    QString SqlCmd;
-    SqlCmd = "INSERT " + c_TableName + "(";
-    foreach(LiField field,dc.GetFieldsByTableName(c_TableName))
-    {
-        if (!field.GetName().trimmed().isEmpty())
-            SqlCmd = SqlCmd + field.GetName() + ",";
-    }
-    SqlCmd = SqlCmd.left(SqlCmd.length()-1); // cut off last ch ','
-    SqlCmd = SqlCmd + ") VALUES(";
-    foreach(LiField field,dc.GetFieldsByTableName(c_TableName))
-    {
-        if (!field.GetName().trimmed().isEmpty())
-            SqlCmd = SqlCmd + "'" + field.GetValue() + "',";
-    }
-    SqlCmd = SqlCmd.left(SqlCmd.length()-1); // cut off last ch ','
-    SqlCmd = SqlCmd + ")";
-    //Running Sqlcmd in Sql Database and return the result
-
-    m_pDb->open();
-
-    QSqlQuery * Qry = new QSqlQuery(*m_pDb);
-    if ((*Qry).exec(SqlCmd))
-        result = 1;
-
-    m_pDb->close();
-
-    delete Qry;
-    Qry = 0;
-
-    return 1;
+    return DoInsert(*m_pDb,dc);
 }
 
 int MysqlQuery::DoInsert(QSqlDatabase pDB, LiDataContext &dc)
@@ -359,10 +216,10 @@ int MysqlQuery::DoInsert(QSqlDatabase pDB, LiDataContext &dc)
     QStringList TableNames;
     dc.GetTableNames(TableNames);
     if (TableNames.count()<=0)
-        throw "Sql Parameters incomplete,Mysql query Error !";
+        throw "Sql Parameters incomplete,Mysql insert Error !";
     QString c_TableName = TableNames.at(0);
     if (dc.GetFieldsByTableName(c_TableName).count() <= 0)
-        throw "Sql Parameters incomplete,Mysql query Error !";
+        throw "Sql Parameters incomplete,Mysql insert Error !";
     QString SqlCmd;
     SqlCmd = "INSERT " + c_TableName + "(";
     foreach(LiField field,dc.GetFieldsByTableName(c_TableName))
@@ -392,15 +249,41 @@ int MysqlQuery::DoInsert(QSqlDatabase pDB, LiDataContext &dc)
     delete Qry;
     Qry = 0;
 
-    return 1;
+    return result;
 }
 
-int MysqlQuery::DoRemove(QSqlDatabase pDB, LiDataContext &dc)
+int MysqlQuery::DoRemove(QSqlDatabase pDB, LiDataContext &)
 {
     pDB.close();  //yes , I do this just because I hate warning.
     int result=0;
 
     return result;
+}
+
+QString MysqlQuery::GenerateCMD(QString cmd, QString fieldName, QString fieldValue ,eAndOrNot fieldAON, eLiSqlOperate fieldSo)
+{
+    QString aon,so;
+    if (fieldAON == OR)
+        aon = " OR ";
+    else if (fieldAON == AND)
+        aon = " AND ";
+    else
+        aon = " NOT ";
+
+    if (fieldSo == liBigAndLes)
+        so = " <> ";
+    if (fieldSo == liEqual)
+        so = " = ";
+    if (fieldSo == liBigger)
+        so = " > ";
+    if (fieldSo == liLesser)
+        so = " < ";
+    if (fieldSo == liEqlAndBig)
+        so = " >= ";
+    if (fieldSo == liEqlAndLes)
+        so = " <= ";
+    cmd = cmd + aon + fieldName + so + "'" + fieldValue + "'";
+    return cmd;
 }
 
 int MysqlQuery::DoUpdate(QSqlDatabase pDB, LiDataContext &dc)
@@ -409,10 +292,10 @@ int MysqlQuery::DoUpdate(QSqlDatabase pDB, LiDataContext &dc)
     QStringList TableNames;
     dc.GetTableNames(TableNames);
     if (TableNames.count()<=0)
-        throw "Sql Parameters incomplete,Mysql query Error !";
+        throw "Sql Parameters incomplete,Mysql update Error !";
     QString c_TableName = TableNames.at(0);
     if (dc.GetFieldsByTableName(c_TableName).count() <= 0)
-        throw "Sql Parameters incomplete,Mysql query Error !";
+        throw "Sql Parameters incomplete,Mysql update Error !";
     QString SqlCmd;
     SqlCmd = "UPDATE " + c_TableName + " SET ";
     foreach(LiField field,dc.GetFieldsByTableName(c_TableName))
@@ -434,10 +317,7 @@ int MysqlQuery::DoUpdate(QSqlDatabase pDB, LiDataContext &dc)
             if (field.GetName().trimmed().isEmpty() || field.GetValue().trimmed().isEmpty())
                 continue;
 
-            if (field.GetAON() == OR)
-                SqlCmd = SqlCmd + " OR " + field.GetName() + "="+ "'" + field.GetValue() + "'";
-            else
-                SqlCmd = SqlCmd + " AND "  + field.GetName() + "="+ "'" + field.GetValue() + "'";
+            SqlCmd = GenerateCMD(SqlCmd,field.GetName(),field.GetValue(),field.GetAON(),field.GetSO());
         }
     }
     //Running Sqlcmd in Sql Database and return the result
@@ -451,68 +331,23 @@ int MysqlQuery::DoUpdate(QSqlDatabase pDB, LiDataContext &dc)
     delete Qry;
     Qry = 0;
 
-    return 1;
+    return result;
 
 }
 
 int MysqlQuery::DoUpdate(LiDataContext &dc)
 {
-    int result=-1;
-    QStringList TableNames;
-    dc.GetTableNames(TableNames);
-    if (TableNames.count()<=0)
-        throw "Sql Parameters incomplete,Mysql query Error !";
-    QString c_TableName = TableNames.at(0);
-    if (dc.GetFieldsByTableName(c_TableName).count() <= 0)
-        throw "Sql Parameters incomplete,Mysql query Error !";
-    QString SqlCmd;
-    SqlCmd = "UPDATE " + c_TableName + " SET ";
-    foreach(LiField field,dc.GetFieldsByTableName(c_TableName))
-    {
-        if ( !field.GetName().trimmed().isEmpty())
-        {
-            SqlCmd = SqlCmd + field.GetName() + " = ";
-            SqlCmd = SqlCmd + "'" + field.GetValue() + "',";
-        }
-    }
-    SqlCmd = SqlCmd.left(SqlCmd.length()-1); // cut off last ch ','
 
-    SqlCmd = SqlCmd + " WHERE 1=1 ";
-    if (dc.GetConditionsByTableName(c_TableName).count()>0)
-    {
-        foreach (LiField field, dc.GetConditionsByTableName(c_TableName))
-        {
-
-            if (field.GetName().trimmed().isEmpty() || field.GetValue().trimmed().isEmpty())
-                continue;
-
-            if (field.GetAON() == OR)
-                SqlCmd = SqlCmd + " OR " + field.GetName() + "="+ "'" + field.GetValue() + "'";
-            else
-                SqlCmd = SqlCmd + " AND "  + field.GetName() + "="+ "'" + field.GetValue() + "'";
-        }
-    }
-    //Running Sqlcmd in Sql Database and return the result
-    m_pDb->open();
-
-    QSqlQuery * Qry = new QSqlQuery(*m_pDb);
-    if ((*Qry).exec(SqlCmd))
-        result = 1;
-    m_pDb->close();
-
-    delete Qry;
-    Qry = 0;
-
-    return 1;
+    return this->DoUpdate(*m_pDb,dc);
 }
 
 //Sqllite Functions
-QSqlDatabase * SqlliteConnect::iniDBConnect(const QString & Server,const QString & UserName,const QString & Password,const QString & Database,const QString & ConnName)
+QSqlDatabase * SqlliteConnect::iniDBConnect(const QString & ,const QString & ,const QString & ,const QString & ,const QString & )
 {
     throw "sqllite not finish!";
 }
 
-bool SqlliteErrorMsg::setMessage(const QString &ErrorMsg)
+bool SqlliteErrorMsg::setMessage(const QString &)
 {
     throw "sqllite not finish!";
 }
@@ -522,72 +357,72 @@ const QString * SqlliteErrorMsg::lastError()
     throw "sqllite not finish!";
 }
 
-QSqlQuery SqlliteQuery::query(QSqlDatabase pDB, QString &SqlCmd, QString &sErr)
+QSqlQuery SqlliteQuery::query(QSqlDatabase , QString &, QString &)
 {
     throw "sqllite not finish!";
 
 }
 
 
-QSqlQuery SqlliteQuery::query(QSqlDatabase pDB, QString &SqlCmd)
+QSqlQuery SqlliteQuery::query(QSqlDatabase , QString &)
 {
     throw "sqllite not finish!";
 }
 
-QSqlQuery SqlliteQuery::query(QString &SqlCmd)
+QSqlQuery SqlliteQuery::query(QString &)
 {
     throw "sqllite not finish!";
 }
 
-LiTable &SqlliteQuery::query(QSqlDatabase pDB, LiDataContext &dc, LiTable &table)
+LiTable &SqlliteQuery::query(QSqlDatabase , LiDataContext &, LiTable &)
 {
     throw "sqllite not finish!";
 }
 
-LiTable &SqlliteQuery::query(LiDataContext &dc, LiTable &table)
+LiTable &SqlliteQuery::query(LiDataContext &, LiTable &)
 {
     throw "sqllite not finish!";
 }
 
 
 
-int SqlliteQuery::DoDel(QSqlDatabase pDB, LiDataContext &dc)
+int SqlliteQuery::DoDel(QSqlDatabase , LiDataContext &)
 {
     throw "sqllite not finish!";
 }
 
-int SqlliteQuery::DoDel(LiDataContext &dc)
+int SqlliteQuery::DoDel(LiDataContext &)
 {
     throw "sqllite not finish!";
 }
 
-int SqlliteQuery::DoInsert(LiDataContext &dc)
+int SqlliteQuery::DoInsert(LiDataContext &)
 {
     throw "sqllite not finish!";
 }
 
-int SqlliteQuery::DoInsert(QSqlDatabase pDB, LiDataContext &dc)
+int SqlliteQuery::DoInsert(QSqlDatabase , LiDataContext &)
 {
     throw "sqllite not finish!";
 }
 
-int SqlliteQuery::DoRemove(QSqlDatabase pDB, LiDataContext &dc)
+int SqlliteQuery::DoRemove(QSqlDatabase , LiDataContext &)
 {
     throw "sqllite not finish!";
 }
 
-int SqlliteQuery::DoUpdate(QSqlDatabase pDB, LiDataContext &dc)
+int SqlliteQuery::DoUpdate(QSqlDatabase , LiDataContext &)
 {
     throw "sqllite not finish!";
 }
 
-int SqlliteQuery::DoUpdate(LiDataContext &dc)
+int SqlliteQuery::DoUpdate(LiDataContext &)
 {
     throw "SqlliteQuery not finish!";
 }
 
 // xml functions
-QSqlDatabase * XmlConnect::iniDBConnect(const QString& Server, const QString &UserName, const QString & Password, const QString & Database, const QString & ConnName)
+QSqlDatabase * XmlConnect::iniDBConnect(const QString& , const QString &, const QString & , const QString & Database, const QString & ConnName)
 {
     return new LiXmlLinker(Database,ConnName);
 }
@@ -633,25 +468,25 @@ XmlQuery::~XmlQuery()
 }
 
 
-QSqlQuery XmlQuery::query(QSqlDatabase pDB, QString &SqlCmd)
+QSqlQuery XmlQuery::query(QSqlDatabase , QString &)
 {
     QSqlQuery query;
     return query;
 }
 
-QSqlQuery XmlQuery::query(QString &SqlCmd)
+QSqlQuery XmlQuery::query(QString &)
 {
     QSqlQuery query;
     return query;
 }
 
-QSqlQuery XmlQuery::query(QSqlDatabase pDB, QString &SqlCmd, QString &sErr)
+QSqlQuery XmlQuery::query(QSqlDatabase , QString &, QString &)
 {
     QSqlQuery query;
     return query;
 }
 
-LiTable &XmlQuery::query(QSqlDatabase pDB, LiDataContext &dc, LiTable &table)
+LiTable &XmlQuery::query(QSqlDatabase , LiDataContext &, LiTable &)
 {
     throw "not finished this query redifinition now!";
 }
@@ -672,10 +507,10 @@ LiTable& XmlQuery::query(LiDataContext &dc, LiTable &table)
     QStringList TableNames;
     dc.GetTableNames(TableNames);
     if (TableNames.count()<=0)
-        throw "Sql Parameters incomplete,Mysql query Error !";
+        throw "Sql Parameters incomplete,xml query Error !";
     QString TableName = TableNames.at(0);
     if (dc.GetFieldsByTableName(TableName).count() <= 0)
-        throw "Sql parameters incomplete,mysql query Error !";
+        throw "Sql parameters incomplete,no field matchs table by name,xml query Error !";
     /***************************************************************************/
     //STEP2 : if the table num is lesser than 2, go to step 3
     //        else , we should join all the records
@@ -725,10 +560,11 @@ LiTable& XmlQuery::query(LiDataContext &dc, LiTable &table)
     /***************************************************************************/
     //STEP4 : Get the data with
     /***************************************************************************/
+    delete[] Conditions;
     return *Result;
 }
 
-int XmlQuery::DoInsert(QSqlDatabase pDB, LiDataContext &dc)
+int XmlQuery::DoInsert(QSqlDatabase , LiDataContext &)
 {
     return 0;// do nothing;
 }
@@ -770,7 +606,7 @@ int XmlQuery::DoInsert(LiDataContext &dc)
     return 1;
 }
 
-int XmlQuery::DoDel(QSqlDatabase pDB, LiDataContext &dc)
+int XmlQuery::DoDel(QSqlDatabase , LiDataContext &)
 {
     return 0;//do nothing;
 }
@@ -809,15 +645,16 @@ int XmlQuery::DoDel(LiDataContext &dc)
     }
     xmlfunctions XmlFunc(m_pLinker->GetFile(),m_pLinker->GetDbName());
     XmlFunc.DelRecord(m_pLinker->GetFile(),TableName,Conditions,ConditionsNum);
+    delete[] Conditions;
     return 1;
 }
 
-int XmlQuery::DoRemove(QSqlDatabase pDB, LiDataContext &dc)
+int XmlQuery::DoRemove(QSqlDatabase , LiDataContext &)
 {
     return 0;
 }
 
-int XmlQuery::DoUpdate(QSqlDatabase pDB, LiDataContext &dc)
+int XmlQuery::DoUpdate(QSqlDatabase , LiDataContext &)
 {
     return 0;
 }
@@ -889,9 +726,38 @@ int XmlQuery::DoUpdate(LiDataContext &dc)
         throw "Linker error , function can not work!";
     xmlfunctions XmlFunc(m_pLinker->GetFile(),m_pLinker->GetDbName());
     Result = XmlFunc.UpdRecord(m_pLinker->GetFile(), TableName,Conditions,ConditionsNum,Fields,FieldNum);
+    delete[] Conditions;
     return Result;
 }
 
 
+
+
+
+FSqlFactory::~FSqlFactory()
+{
+
+}
+
+ISqlQuery::~ISqlQuery()
+{
+
+}
+
 /******************              Sql Factory codes END            ***********************/
+
+
+
+
+
+
+
+
+
+
+ISqlErrorMsg::~ISqlErrorMsg()
+{
+    //do nothing
+}
+
 
