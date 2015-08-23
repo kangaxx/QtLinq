@@ -1,4 +1,3 @@
-//db work on xml file
 #include "sqlfunctions.h"
 
 xmlfunctions::xmlfunctions(QFile *File, QString Database)
@@ -26,7 +25,7 @@ xmlfunctions::xmlfunctions(QFile *File, QString Database)
     {
         if (Root.isElement())
         {
-            if (Root.toElement().attribute("name") == Database && Root.nodeName() == "database")
+           if (Root.toElement().attribute("name") == Database && Root.nodeName() == "database")
             {
                 m_DatabaseTree = Root;
                 File->close();
