@@ -141,3 +141,31 @@ void SqlFunctions::GetSqlLink(QString iniFilePath, QString iniFileName, QString 
     conn.ConnName = connName;
 }
 
+LiResultList SqlFunctions::rcdToLiResult(LiTable &table,const QStringList &fieldName)
+{
+    LiResultList rst;
+    int rcdCount = table.GetRecords().GetCount();
+    if (rcdCount == 0)
+        return rst;
+
+    for (int i = 0;i<rcdCount;i++){
+        rst.insert(table.GetRecords().NextFields(fieldName));
+    }
+    return rst;
+}
+
+int SqlFunctions::listToFields(LiConditionList &values, LiField *fields)
+{
+    if (fields == NULL)
+        throw QString("Error,condtionListToFields fail , arg fields is NULL");
+    int i=0;
+    for (; i < values.m_values.size()/2;i++){
+        fields[i].SetAON(values.getAON(values,i));
+        fields[i].SetSo(values.getOperator(values,i));
+        fields[i].SetName(values.getFieldName(values,i));
+        fields[i].SetValue(values.getFieldValue(values,i));
+    }
+    return i;// careful! i is m_values.size()/2 now
+}
+
+

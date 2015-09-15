@@ -9,9 +9,9 @@ QT       += core gui\
             widgets\
             xml
 
-TARGET = $(QM_ROOT)/lib/SqlFunctions
+TARGET = ../lib/SqlFunctions
 TEMPLATE = lib
-#CONFIG += staticlib
+CONFIG += plugin
 
 SOURCES += sqlfunctions.cpp \
     sqlfactory.cpp \
@@ -27,5 +27,5 @@ unix:!symbian {
     INSTALLS += target
 }
 
-LIBS += -L$(QM_ROOT)/lib -lcommonfunction_c
-INCLUDEPATH += $(QM_SRC)/hds
+LIBS += -L../lib -lcommonfunction_c
+INCLUDEPATH += ../hds

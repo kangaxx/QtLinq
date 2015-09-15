@@ -24,8 +24,6 @@ MysqlQuery::~MysqlQuery()
     {
         if (m_pDb->isOpen())
             m_pDb->close();
-        delete m_pDb;
-        m_pDb = 0;
     }
 }
 
@@ -158,6 +156,7 @@ LiTable &MysqlQuery::query(LiDataContext &dc, LiTable &table)
     return query(*m_pDb,dc,table);
 }
 
+
 int MysqlQuery::DoDel(QSqlDatabase pDB, LiDataContext &dc)
 {
     QStringList TableNames;
@@ -205,10 +204,12 @@ int MysqlQuery::DoDel(LiDataContext &dc)
     return DoDel(*m_pDb,dc);
 }
 
+
 int MysqlQuery::DoInsert(LiDataContext &dc)
 {
     return DoInsert(*m_pDb,dc);
 }
+
 
 int MysqlQuery::DoInsert(QSqlDatabase pDB, LiDataContext &dc)
 {
@@ -251,6 +252,7 @@ int MysqlQuery::DoInsert(QSqlDatabase pDB, LiDataContext &dc)
 
     return result;
 }
+
 
 int MysqlQuery::DoRemove(QSqlDatabase pDB, LiDataContext &)
 {
@@ -324,6 +326,7 @@ int MysqlQuery::DoUpdate(QSqlDatabase pDB, LiDataContext &dc)
     pDB.open();
 
     QSqlQuery * Qry = new QSqlQuery(pDB);
+
     if ((*Qry).exec(SqlCmd))
         result = 1;
     pDB.close();
@@ -340,6 +343,25 @@ int MysqlQuery::DoUpdate(LiDataContext &dc)
 
     return this->DoUpdate(*m_pDb,dc);
 }
+
+//int MysqlQuery::DoUpdate(LiConditionList &values, LiConditionList &conditions, LiTableName table)
+//{
+//    LiDataContext dc;
+//    dc.SetTableName(table);
+//    LiField *field = new LiField[values.m_values.size()/2];
+//    LiField *cond = new LiField[conditions.m_values.size()/2];
+//    int fieldNum = SqlFunctions::listToFields(values,field);
+//    for (int i = 0; i < fieldNum; i++)
+//        dc.AddField(&(field[i]));
+
+//    int condNum = SqlFunctions::listToFields(values,cond);
+//    for (int i = 0; i < condNum; i++)
+//        dc.AddCondition(cond[i]);
+//    int rst = DoUpdate(dc);
+//    delete [] fields;
+//    delete [] cond;
+//    return rst;
+//}
 
 //Sqllite Functions
 QSqlDatabase * SqlliteConnect::iniDBConnect(const QString & ,const QString & ,const QString & ,const QString & ,const QString & )
@@ -564,6 +586,7 @@ LiTable& XmlQuery::query(LiDataContext &dc, LiTable &table)
     return *Result;
 }
 
+
 int XmlQuery::DoInsert(QSqlDatabase , LiDataContext &)
 {
     return 0;// do nothing;
@@ -744,6 +767,87 @@ ISqlQuery::~ISqlQuery()
 
 }
 
+LiResultList ISqlQuery::query(QStringList &fields, LiConditionList &conditions, LiTableName tableName)
+{
+    LiTable table;
+    query(fields,conditions,tableName,table);
+    return SqlFunctions::rcdToLiResult(table,fields);
+
+}
+
+LiTable &ISqlQuery::query(QStringList &fields, LiConditionList &conditions, LiTableName tableName, LiTable &table)
+{
+    LiDataContext dc;
+    if (fields.size() < 1)
+        throw QString("Error, mysql query fail, fields size < 0!");
+    if (conditions.isComplete() == false)
+        throw QString("Error, mysql query fail, conditions is in-complete!");
+    LiField *tempFields = new LiField[fields.size()];
+    LiField *tempConditions = new LiField[conditions.m_Operate.size()];
+    dc.SetTableName(tableName);
+    //create query fields!
+    LiField *t = tempFields;
+    foreach (QString name, fields) {
+        t->SetName(name);
+        dc.AddField(t++);
+    }
+    //create query conditions
+    int fieldNum = SqlFunctions::listToFields(conditions,tempConditions);
+    for (int i = 0;i<fieldNum;i++)
+        dc.AddCondition(&(tempConditions[i]));
+    //do query
+    query(dc,table);
+    delete [] tempFields;
+    delete [] tempConditions;
+    return table;
+}
+
+int ISqlQuery::DoInsert(LiConditionList &values, LiTableName tableName)
+{
+    LiField *fields;
+    fields = new LiField[values.m_Operate.size()];
+    LiDataContext dc;
+    dc.SetTableName(tableName);
+    int fieldNum = SqlFunctions::listToFields(values,fields);
+    for (int i = 0; i < fieldNum; i++)
+        dc.AddField(&(fields[i]));
+    int rst = DoInsert(dc);
+    delete [] fields;
+    return rst;
+}
+
+int ISqlQuery::DoUpdate(LiConditionList &values, LiConditionList &conditions, LiTableName tableName)
+{
+    LiDataContext dc;
+    dc.SetTableName(tableName);
+    LiField *field = new LiField[values.m_Operate.size()];
+    LiField *cond = new LiField[conditions.m_Operate.size()];
+    int fieldNum = SqlFunctions::listToFields(values,field);
+    for (int i = 0; i < fieldNum; i++)
+        dc.AddField(&(field[i]));
+
+    int condNum = SqlFunctions::listToFields(conditions,cond);
+    for (int i = 0; i < condNum; i++)
+        dc.AddCondition(&(cond[i]));
+    int rst = DoUpdate(dc);
+    delete [] field;
+    delete [] cond;
+    return rst;
+}
+
+int ISqlQuery::DoDel(LiConditionList &conditions, LiTableName tableName)
+{
+    LiDataContext dc;
+    dc.SetTableName(tableName);
+    LiField *cond = new LiField[conditions.m_Operate.size()];
+    int condNum = SqlFunctions::listToFields(conditions,cond);
+    for (int i = 0; i < condNum; i++)
+        dc.AddCondition(&(cond[i]));
+    int result = DoDel(dc);
+    delete [] cond;
+    return result;
+}
+
 /******************              Sql Factory codes END            ***********************/
 
 
@@ -761,3 +865,48 @@ ISqlErrorMsg::~ISqlErrorMsg()
 }
 
 
+
+
+LiConditionList &LiConditionList::operator <<(eLiSqlOperate value)
+{
+    if (!isValid(value))
+        throw QString("Error ,insert LiConditionList fail, pls check input stream carefully");
+    this->m_Operate.append(value);
+    return *this;
+}
+
+LiConditionList &LiConditionList::operator <<(eAndOrNot value)
+{
+    if (!isValid(value))
+        throw QString("Error ,insert LiConditionList fail, pls check input stream carefully");
+    this->m_AON.append(value);
+    return *this;
+}
+
+LiConditionList &LiConditionList::operator <<(QString value)
+{
+    if (!isValid(value))
+        throw QString("Error ,insert LiConditionList fail, pls check input stream carefully");
+    this->m_values.append(value);
+    return *this;
+}
+
+LiConditionList &LiConditionList::operator <<(int value)
+{
+    return (*this)<< QString::number(value);
+}
+
+LiConditionList &LiConditionList::operator <<(long value)
+{
+    return (*this)<< QString::number(value);
+}
+
+LiConditionList &LiConditionList::operator <<(float value)
+{
+    return (*this)<< QString::number(value);
+}
+
+LiConditionList &LiConditionList::operator <<(const char *value)
+{
+    return (*this)<< QString(value);
+}
