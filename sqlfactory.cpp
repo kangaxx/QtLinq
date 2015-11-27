@@ -5,25 +5,20 @@
 //Factory Mysql
 //Mysql Factory
 using namespace std;
+
+
 MysqlFactory::MysqlFactory(Connections Conn)
 {
-    m_Conn = Conn;
-    m_db = new QSqlDatabase;
-    *m_db = QSqlDatabase::addDatabase("QMYSQL",m_Conn.ConnName);
-    m_db->setHostName(Conn.Server);
-    m_db->setUserName(Conn.User);
-    m_db->setPassword(Conn.Passwd);
-    m_db->setDatabaseName(Conn.Database);
+    setConn(Conn);
 }
 
 MysqlFactory::~MysqlFactory()
 {
-    cout << "Do sqlfac desctruct!" << endl;
     if (m_db != 0){
-        if (m_db->isOpen())
-            m_db->close();
-        m_db->removeDatabase(m_Conn.ConnName);
+        m_db->close();
         delete m_db;
+        QSqlDatabase::removeDatabase(m_Conn.ConnName);
+
         m_db = 0;
     }
 }
@@ -64,9 +59,10 @@ ISqlQuery * SqlliteFactory::sqlQryFct()
 
 
 //Factory XML
+
 XmlFactory::XmlFactory(Connections Conn)
 {
-    m_Conn = Conn;
+    setConn(Conn);
 }
 
 XmlFactory::~XmlFactory()
@@ -107,10 +103,55 @@ SqlFunctions::~SqlFunctions()
 
 }
 
+FSqlFactory &SqlFunctions::Create(eFctType type, QString iniFile, QString Path)
+{
+
+    string filePath = BaseFunctions::combineFilePath(Path.toStdString(),iniFile.toStdString());
+    return Create(type,filePath);
+
+}
+
+FSqlFactory &SqlFunctions::Create(eFctType type, string filePath)
+{
+
+    Connections conn;
+    conn.Server = QString::fromStdString(BaseFunctions::GetParaByName(filePath,CHARS_CONNECTIONS_ELEMENTNAME_SERVER));
+    conn.Database = QString::fromStdString(BaseFunctions::GetParaByName(filePath,CHARS_CONNECTIONS_ELEMENTNAME_DATABASE));
+    conn.User =  QString::fromStdString(BaseFunctions::GetParaByName(filePath,CHARS_CONNECTIONS_ELEMENTNAME_USERNAME));
+    conn.Passwd = QString::fromStdString(BaseFunctions::GetParaByName(filePath,CHARS_CONNECTIONS_ELEMENTNAME_PASSWORD));
+    switch(type){
+    case XML:
+        conn.ConnName = QString::fromStdString(BaseFunctions::GetParaByName(filePath,CHARS_CONNECTIONS_ELEMENTNAME_CONNNAME));
+        break;
+    case MYSQL:
+        conn.ConnName = CHARS_CONNECTIONS_STATIC_CONNATION_NAME;
+        break;
+    default:
+        throw "ERROR: create sql link fail, unkown fct type!";
+    }
+    return Create(type,conn);
+}
+
+FSqlFactory &SqlFunctions::Create(eFctType type, Connections conn)
+{
+    static FSqlFactory *rst;
+    switch(type){
+    case XML:
+        rst = new XmlFactory(conn);
+        break;
+    case MYSQL:
+        rst = new MysqlFactory(conn);
+        break;
+    default:
+        throw "ERROR: create sql link fail, unkown fct type!";
+    }
+    return *rst;
+}
+
 
 FSqlFactory & SqlFunctions::Create(eFctType type, Connections Conn, FSqlFactory** SqlDest)
 {
-    FSqlFactory * result;
+//    FSqlFactory * result;
     switch (type) {
     case MYSQL:
         *SqlDest = new MysqlFactory(Conn);
@@ -126,10 +167,12 @@ FSqlFactory & SqlFunctions::Create(eFctType type, Connections Conn, FSqlFactory*
         *SqlDest = new MysqlFactory(Conn);
         break;
     }
-    result = *SqlDest;
+//    result = *SqlDest;
 
-    return *result;
+    return **SqlDest;
+//    return *result;
 }
+
 
 void SqlFunctions::GetSqlLink(QString iniFilePath, QString iniFileName, QString , QString connName, Connections &conn)
 {
@@ -147,7 +190,7 @@ LiResultList SqlFunctions::rcdToLiResult(LiTable &table,const QStringList &field
     int rcdCount = table.GetRecords().GetCount();
     if (rcdCount == 0)
         return rst;
-
+    rst.setName(fieldName);
     for (int i = 0;i<rcdCount;i++){
         rst.insert(table.GetRecords().NextFields(fieldName));
     }

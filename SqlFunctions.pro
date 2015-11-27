@@ -29,3 +29,6 @@ unix:!symbian {
 
 LIBS += -L../lib -lcommonfunction_c
 INCLUDEPATH += ../hds
+
+HEADERS += \
+    ../hds/sqlfunctions.h

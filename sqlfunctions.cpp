@@ -117,7 +117,6 @@ LiTable& MysqlQuery::query(QSqlDatabase db, LiDataContext &dc, LiTable &table)
     {
         foreach (LiField field, dc.GetConditionsByTableName(c_TableName))
         {
-
             if (field.GetName().trimmed().isEmpty() || field.GetValue().trimmed().isEmpty())
                 continue;
 
@@ -125,6 +124,17 @@ LiTable& MysqlQuery::query(QSqlDatabase db, LiDataContext &dc, LiTable &table)
         }
     }
 
+    //add Order by sub sentence
+    if (dc.getOrderFieldByTableName(c_TableName).count() > 0){
+        SqlCmd += " ORDER BY ";
+        foreach(LiField field, dc.getOrderFieldByTableName(c_TableName))
+        {
+            if (field.GetName().trimmed().isEmpty())
+                continue;
+            SqlCmd += field.GetName()+ QString(",");
+        }
+        SqlCmd = SqlCmd.left(SqlCmd.length()-1); //cut off last ","
+    }
 
     //Running Sqlcmd in Sql Database and return the result
 
@@ -164,8 +174,6 @@ int MysqlQuery::DoDel(QSqlDatabase pDB, LiDataContext &dc)
     if (TableNames.count()<=0)
         throw "Sql Parameters incomplete,no table set,Mysql del Error !";
     QString c_TableName = TableNames.at(0);
-    if (dc.GetConditionsByTableName(c_TableName).count() <= 0)
-        throw "Sql Parameters incomplete,Mysql del Error !";
     QString SqlCmd;
     SqlCmd = "DELETE ";
 
@@ -284,7 +292,16 @@ QString MysqlQuery::GenerateCMD(QString cmd, QString fieldName, QString fieldVal
         so = " >= ";
     if (fieldSo == liEqlAndLes)
         so = " <= ";
-    cmd = cmd + aon + fieldName + so + "'" + fieldValue + "'";
+    if (fieldSo == liLike)
+        so = " like ";
+
+    if (fieldSo == liNotNULL)
+        cmd = cmd + aon + fieldName + " is not null ";
+    else if (fieldSo == liIsNULL)
+        cmd = cmd + aon + fieldName + " is null ";
+    else
+        cmd = cmd + aon + fieldName + so + "'" + fieldValue + "'";
+    qDebug() << cmd;
     return cmd;
 }
 
@@ -767,38 +784,46 @@ ISqlQuery::~ISqlQuery()
 
 }
 
-LiResultList ISqlQuery::query(QStringList &fields, LiConditionList &conditions, LiTableName tableName)
+LiResultList ISqlQuery::query(QStringList &fields, LiTableName tableName, LiConditionList *conditions)
 {
     LiTable table;
-    query(fields,conditions,tableName,table);
+    query(fields,tableName,table,conditions);
     return SqlFunctions::rcdToLiResult(table,fields);
 
 }
 
-LiTable &ISqlQuery::query(QStringList &fields, LiConditionList &conditions, LiTableName tableName, LiTable &table)
+LiTable &ISqlQuery::query(QStringList &fields, LiTableName tableName, LiTable &table, LiConditionList *conditions)
 {
+
     LiDataContext dc;
     if (fields.size() < 1)
         throw QString("Error, mysql query fail, fields size < 0!");
-    if (conditions.isComplete() == false)
-        throw QString("Error, mysql query fail, conditions is in-complete!");
+
     LiField *tempFields = new LiField[fields.size()];
-    LiField *tempConditions = new LiField[conditions.m_Operate.size()];
+
     dc.SetTableName(tableName);
     //create query fields!
     LiField *t = tempFields;
     foreach (QString name, fields) {
         t->SetName(name);
-        dc.AddField(t++);
+        dc.AddField(t);
+        dc.AddOrder(t++);
     }
     //create query conditions
-    int fieldNum = SqlFunctions::listToFields(conditions,tempConditions);
-    for (int i = 0;i<fieldNum;i++)
-        dc.AddCondition(&(tempConditions[i]));
+    LiField *tempConditions = NULL;
+    if (conditions != NULL && conditions->m_Operate.size() > 0){
+        if (conditions->isComplete() == false)
+            throw QString("Error, mysql query fail, conditions is in-complete!");
+        tempConditions = new LiField[conditions->m_Operate.size()];
+        int fieldNum = SqlFunctions::listToFields(*conditions,tempConditions);
+        for (int i = 0;i<fieldNum;i++)
+            dc.AddCondition(&(tempConditions[i]));
+    }
     //do query
     query(dc,table);
     delete [] tempFields;
-    delete [] tempConditions;
+    if (tempConditions != NULL)
+        delete [] tempConditions;
     return table;
 }
 
@@ -818,33 +843,52 @@ int ISqlQuery::DoInsert(LiConditionList &values, LiTableName tableName)
 
 int ISqlQuery::DoUpdate(LiConditionList &values, LiConditionList &conditions, LiTableName tableName)
 {
+    return DoUpdate(values,tableName,&conditions);
+}
+
+int ISqlQuery::DoUpdate(LiConditionList &values, LiTableName tableName, LiConditionList *conditions)
+{
     LiDataContext dc;
     dc.SetTableName(tableName);
     LiField *field = new LiField[values.m_Operate.size()];
-    LiField *cond = new LiField[conditions.m_Operate.size()];
+
     int fieldNum = SqlFunctions::listToFields(values,field);
     for (int i = 0; i < fieldNum; i++)
         dc.AddField(&(field[i]));
 
-    int condNum = SqlFunctions::listToFields(conditions,cond);
-    for (int i = 0; i < condNum; i++)
-        dc.AddCondition(&(cond[i]));
+    LiField *cond = NULL;
+    if (conditions != NULL){
+        cond = new LiField[conditions->m_Operate.size()];
+        int condNum = SqlFunctions::listToFields(*conditions,cond);
+        for (int i = 0; i < condNum; i++)
+            dc.AddCondition(&(cond[i]));
+    }
     int rst = DoUpdate(dc);
     delete [] field;
-    delete [] cond;
+    if (cond != NULL)
+        delete [] cond;
     return rst;
 }
 
 int ISqlQuery::DoDel(LiConditionList &conditions, LiTableName tableName)
 {
+    return DoDel(tableName, &conditions);
+}
+
+int ISqlQuery::DoDel(LiTableName tableName, LiConditionList *conditions)
+{
     LiDataContext dc;
     dc.SetTableName(tableName);
-    LiField *cond = new LiField[conditions.m_Operate.size()];
-    int condNum = SqlFunctions::listToFields(conditions,cond);
-    for (int i = 0; i < condNum; i++)
-        dc.AddCondition(&(cond[i]));
+    LiField *cond = NULL;
+    if (conditions != NULL){
+        cond = new LiField[conditions->m_Operate.size()];
+        int condNum = SqlFunctions::listToFields(*conditions,cond);
+        for (int i = 0; i < condNum; i++)
+            dc.AddCondition(&(cond[i]));
+    }
     int result = DoDel(dc);
-    delete [] cond;
+    if (cond != NULL)
+        delete [] cond;
     return result;
 }
 

@@ -694,7 +694,7 @@ LiXmlLinker::LiXmlLinker(Connections Conn)
         throw "Iniatialization Fail, please check the file path and name";
     m_pFile = new QFile;
     m_pFile->setFileName(m_FileName);
-
+    cout << "xml open file name:" <<m_FileName.toStdString() <<endl;
 
     //donothing;
 }
